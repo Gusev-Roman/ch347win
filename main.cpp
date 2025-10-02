@@ -26,6 +26,8 @@ using namespace std::literals;
 #define W25X_ManufactDeviceID    0x90
 #define W25X_JedecDeviceID       0x9F
 
+bool always_yes = false;
+
 UINT16 SPI_Flash_ReadID(ULONG port)
 {
     UINT16 Temp = 0;
@@ -111,6 +113,11 @@ int parse_cmd(int argc, char *argv[]) {
             switch (argv[i][1]) {
             case 'r':
                 std::cout << "file to read:" << argv[i]+2 << std::endl;
+                // посчитать размер, выделить буфер, скопировать имя файла
+                // как быть, если после -r следует пробел? скопировать следующий параметр целиком (если он есть)
+                break;
+            case 'y': // автоматическая перезапись при чтении
+                always_yes = true;
                 break;
             default:
                 std::cout << "invalid parameter " << argv[i] << std::endl;
