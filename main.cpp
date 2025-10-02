@@ -12,7 +12,9 @@
 #include <stdint.h>
 
 #include <windows.h>
-#include "inc/CH347DLL_EN.H"
+#include "CH347DLL_EN.H"
+#include "spi_flash.h"
+
 
 namespace ra = std::ranges;
 //namespace vi = ra::views;
@@ -24,248 +26,10 @@ using namespace std::literals;
 #define W25X_ManufactDeviceID    0x90
 #define W25X_JedecDeviceID       0x9F
 
-// Let's simplify meta-programming with popular use-cases
-
-// template allows you to write one TEMPLATE (in eng it means a pattern or guide
-// to be used as model to produce something...) if I had a Model class which has
-// a field of X type and If I wanted this class for each {int, float, std::string} 
-// then without meta-programming:
-/*
-struct ModelInt {
-    int value;
-};
-
-struct ModelFloat {
-    float value;
-};
-
-struct ModelString {
-    std::string value;
-};
-*/
-// I would MANUALLY code each. meta-programming is a method asks compiler to do it
-// instead of you.
-
-template <typename T>
-struct Model {
-    T value;
-};
-// whenever you use it with a new type it will generate a new type for you.
-// int => Model<int>
-// float => Model<float>
-// string => Model<std::string>
-// they use same TEMPLATE but they are different. Model<int> != Model<float>
-// Model<std::string> => <T> now part of the className
-
-// virtual methods in template classes
-/*
-template <typename T>
-struct Base {
-    virtual void foo() = 0;
-    virtual void bar() { std::cout << "base::bar\n"; }
-};
-
-template <typename T>
-struct Derived : Base<T> {
-    void foo() override { std::cout << "derived::foo\n"; }
-};
-
-void test_virtual_methods() {
-    std::unique_ptr<Base<int>> ptr = std::make_unique<Derived<int>>();
-    ptr->foo();
-    ptr->bar();
-}
-
-struct MyType {
-    constexpr operator std::string_view() const { return "MyType"sv; }
-};
-
-// template member methods
-struct Wrapper {
-    template <typename T>
-        requires std::integral<T>
-    constexpr auto add(T l, T r) const {
-        return l + r;
-    }
-
-    template <typename T>
-        requires std::convertible_to<std::remove_cvref_t<T>, std::string_view>
-    constexpr auto foo(T&& arg) const {
-        return std::string_view{ arg };
-    }
-};
-
-void test_template_members() {
-    constexpr Wrapper w{};
-    static_assert(w.add(1, 2) == 3);
-    static_assert(w.foo(MyType{}) == "MyType"sv);
-}
-
-// pass template Cont to class template
-template <template <typename> class Cont, typename DT = int>
-struct ContUser {
-    Cont<DT> full_generic_cont;
-    Cont<int> special_cont; // this time you don't need to pass DT too
-};
-
-void test_template_cont() {
-    ContUser<std::vector, float> full;
-    ContUser<std::vector> special;
-}
-
-// pass template Cont to function template
-template <typename Container>
-void template_cont_func(Container const& cont) { // universal (forward-ref) doesn't apply here
-    using DT = typename Container::value_type;
-    std::cout << typeid(cont).name() << " " << typeid(DT).name() << "\n";
-}
-
-void test_template_cont_func() {
-    std::vector<int> v;
-    template_cont_func(v);
-}
-
-// template static functions - think them like non-member function in .cpp files
-struct Factory {
-    template <typename T>
-    static constexpr T create() {
-        if constexpr (std::integral<T>) {
-            return 0;
-        }
-        else if constexpr (std::floating_point<T>) {
-            return 0.0;
-        }
-        else if constexpr (std::is_constructible_v<T, const char*>) {
-            return T("default");
-        }
-        else {
-            static_assert(sizeof(T) == 0, "Unsupported type");
-        }
-    }
-};
-
-void test_template_static_methods() {
-    static_assert(Factory::create<int>() == 0);
-    static_assert(Factory::create<float>() == 0.0);
-}
-
-// variadic template params of template classes
-template <typename... Ts>
-    requires(sizeof...(Ts) >= 1)
-struct MostDerived : Ts... {};
-
-template <typename... Ts>
-    requires(sizeof...(Ts) >= 1)
-struct MostBorrower : Ts... {
-    using Ts::foo...;
-};
-
-template <typename... Ts>
-    requires(sizeof...(Ts) >= 1)
-struct DWrapper {
-    std::tuple<Ts...> mdata;
-};
-
-template <typename T>
-concept HasFoo = requires(T t) {
-    { t.foo() };
-};
-
-template <typename... Ts>
-    requires(HasFoo<Ts> && ...)
-struct BorrowAllFoos : Ts... {
-    using Ts::foo...;
-};
-
-// variadic template params of template methods (static and non-static)
-struct Outer {
-    template <typename... Ts>
-    constexpr auto collect(Ts&&... args) {
-        return std::tuple<Ts...>{args...};
-    }
-};
-
-// constraints & concepts: controlling the T (type)
-// there are multiple ways to use requires { type based + instance based + ... }
-template <typename T>
-    requires(std::integral<T>)
-constexpr auto add(T x, T y) {
-    return x + y;
-}
-
-// instance
-template <typename It>
-constexpr void next(It& it)
-    requires requires {
-    it++;     // simple ++ existence check
-    it.foo(); // simple foo existence check
-    { it.bar() } -> std::same_as<void>; // simple bar existence with return-type check
-}
-{
-    it++;
-}
-
-// if constexpr => compile time conditional compilation via type-info
-struct CExpr {
-    template <typename T>
-    constexpr void foo(T arg) const {
-        if constexpr (std::integral<std::remove_cvref_t<T>>) {
-            std::cout << "functions easily captures the types in their headers\n";
-        }
-        else {
-            std::cout << "it's not integral\n";
-        }
-    }
-
-    template <typename T>
-    static constexpr void bar(T arg) {
-        if constexpr (std::integral<std::remove_cvref_t<T>>) {
-            std::cout << "functions easily captures the types in their headers\n";
-        }
-        else {
-            std::cout << "it's not integral\n";
-        }
-    }
-};
-
-void test_compile_time_conditional() {
-    CExpr exp0;
-    constexpr CExpr exp1;
-    exp0.foo(0);
-    exp1.foo(0);
-    exp0.foo("hakan");
-    exp1.foo("gedek");
-    CExpr::bar(0);
-    CExpr::bar("hakan");
-}
-
-// universal ctor: wrap the ctor with another template variable + && =>
-// convertible or same_as or... just be careful.
-template <typename T>
-struct Sample {
-    template <typename U>
-    Sample(U&& value) : m_value(std::forward<U>(value)) {}
-
-    template <typename U>
-    constexpr auto update(U&& value) {
-        m_value = std::forward<U>(value); // triggers correct assignment op
-    }
-
-    T m_value;
-};
-
-void test_universal_ctor() {
-    Sample<int> s{ 0 };
-    int x = 0;
-    Sample<int> s1{ x };
-    const int y = 0;
-    Sample<int> s2{ y };
-}
-*/
 UINT16 SPI_Flash_ReadID(ULONG port)
 {
     UINT16 Temp = 0;
-    UCHAR   cmd = W25X_ManufactDeviceID;
+    UCHAR   cmd = CMD_FLASH_RDID1; //W25X_ManufactDeviceID;
     UCHAR   zero = 0;
     UCHAR   data = 0xFF;
 
@@ -293,7 +57,7 @@ UINT16 SPI_Flash_ReadID(ULONG port)
 /* port не несет смысловой нагрузки в данной версии библиотеки, работает значение 0 */
 UINT16 SPI_Flash_ReadJEDEC(ULONG port) {
     UINT16 Temp = 0;
-    UCHAR cmd = W25X_JedecDeviceID;
+    UCHAR cmd = CMD_FLASH_JEDEC_ID;
     UCHAR zero = 0;
     UCHAR data = 0;
 
@@ -316,21 +80,16 @@ UINT16 SPI_Flash_ReadJEDEC(ULONG port) {
 void SPI_Flash_Read(uint32_t port, UCHAR *pBuffer, UINT32 ReadAddr, uint16_t size)
 {
     uint32_t i;
-    uint8_t cmd = W25X_ReadData;
+    uint8_t cmd = CMD_FLASH_READ;
     uint8_t addr = 0;
     uint8_t data;
 
     CH347SPI_ChangeCS(port, 0);
-    cmd = W25X_ReadData;
-    //SPI1_ReadWriteByte(W25X_ReadData);
     CH347SPI_WriteRead(port, 0, 1, &cmd);
-    //SPI1_ReadWriteByte((u8)((ReadAddr) >> 16));
     addr = ((ReadAddr) >> 16);
     CH347SPI_WriteRead(port, 0, 1, &addr);
-    //SPI1_ReadWriteByte((u8)((ReadAddr) >> 8));
     addr = ((ReadAddr) >> 8);
     CH347SPI_WriteRead(port, 0, 1, &addr);
-    //SPI1_ReadWriteByte((u8)ReadAddr);
     addr = ((ReadAddr) & 0xFF);
     CH347SPI_WriteRead(port, 0, 1, &addr);
 
@@ -342,8 +101,27 @@ void SPI_Flash_Read(uint32_t port, UCHAR *pBuffer, UINT32 ReadAddr, uint16_t siz
     }
     CH347SPI_ChangeCS(port, 0);
 }
+int parse_cmd(int argc, char *argv[]) {
+    for (int i = 1; i < argc; i++) {
+        if (argv[i][0] != '-') {
+            std::cout << "invalid parameter " << argv[i] << std::endl;
+            return 0;
+        }
+        else {
+            switch (argv[i][1]) {
+            case 'r':
+                std::cout << "file to read:" << argv[i]+2 << std::endl;
+                break;
+            default:
+                std::cout << "invalid parameter " << argv[i] << std::endl;
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
 
-int main() {
+int main(int argc, char *argv[]) {
     UCHAR drv;
     UCHAR dll;
     UCHAR bcd;
@@ -355,13 +133,19 @@ int main() {
     ULONG bsz = 1024;
     UINT16 Flash_Model, Jedec;
 
-
-    std::cout << "*1*" << std::endl;
-
+    if (argc > 1) {
+        if (!parse_cmd(argc, argv)) {
+            return 0;
+        }
+    }
     HANDLE hh = CH347OpenDevice(0);
 
     if (hh) {
         CH347GetVersion(0, &drv, &dll, &bcd, &chip);
+        if (!drv) {
+            std::cout << "Loader not found, check board and cable! Is LED on?" << std::endl;
+            return 0;
+        }
         printf("Found driver CH3_%d, dll ver%d, bcd %d and chip type %d\r\n", drv, dll, bcd, chip);
         CH347GetSerialNumber(0, bser);
         printf("Serial number is %s\r\n", bser);
@@ -408,14 +192,8 @@ int main() {
         //CH347ReadData(0, buff, &bsz);
         CH347CloseDevice(0);
     }
-    /*
-    test_universal_ctor();
-    test_virtual_methods();
-    test_template_members();
-    test_compile_time_conditional();
-    test_template_cont();
-    test_template_cont_func();
-    test_template_static_methods();
-    */
+    else {
+        std::cout << "Driver not found, please install CH347PAR!\r\n";
+    }
     return 0;
 }
