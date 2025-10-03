@@ -15,6 +15,7 @@
 #include "CH347DLL_EN.H"
 #include "spi_flash.h"
 
+extern uint16_t readall(const char* _filename, uint8_t* _cmpbuf, size_t* sz);
 
 namespace ra = std::ranges;
 //namespace vi = ra::views;
@@ -26,7 +27,10 @@ using namespace std::literals;
 #define W25X_ManufactDeviceID    0x90
 #define W25X_JedecDeviceID       0x9F
 
-bool always_yes = false;
+BOOLEAN  _always_yes = FALSE;
+char* _filename = NULL;      // file to READ or VERIFY or WRITE
+char  _action = 0;           // требуемая операция
+uint8_t* _cmpbuf;
 
 UINT16 SPI_Flash_ReadID(ULONG port)
 {
@@ -104,20 +108,37 @@ void SPI_Flash_Read(uint32_t port, UCHAR *pBuffer, UINT32 ReadAddr, uint16_t siz
     CH347SPI_ChangeCS(port, 0);
 }
 int parse_cmd(int argc, char *argv[]) {
+    BOOL incomplete_hyphen = FALSE;
+
     for (int i = 1; i < argc; i++) {
-        if (argv[i][0] != '-') {
+        // если предыдущий параметр - незавершенный дефис, пропускаем эту проверку!
+        if ((argv[i][0] != '-') && !incomplete_hyphen) {
             std::cout << "invalid parameter " << argv[i] << std::endl;
             return 0;
         }
         else {
+            if (incomplete_hyphen) {
+                size_t stl = strlen(argv[i]);
+                _filename = (char *)malloc(stl+2);
+                if (_filename) strcpy_s(_filename, stl+1, argv[i]);
+                incomplete_hyphen = FALSE;
+                continue;   // check next param
+            }
             switch (argv[i][1]) {
             case 'r':
-                std::cout << "file to read:" << argv[i]+2 << std::endl;
-                // посчитать размер, выделить буфер, скопировать имя файла
-                // как быть, если после -r следует пробел? скопировать следующий параметр целиком (если он есть)
+            case 'v':
+            case 'w':
+                _action = argv[i][1];
+                if (argv[i][2] == 0) {
+                    // имя файла следует в следующем параметре (если он есть)
+                    incomplete_hyphen = TRUE;
+                    continue;
+                }
+                _filename = (char*)malloc(strlen(argv[i]));
+                if (_filename) strcpy_s(_filename, strlen(argv[i]), argv[i]+2);
                 break;
             case 'y': // автоматическая перезапись при чтении
-                always_yes = true;
+                _always_yes = TRUE;
                 break;
             default:
                 std::cout << "invalid parameter " << argv[i] << std::endl;
@@ -125,7 +146,21 @@ int parse_cmd(int argc, char *argv[]) {
             }
         }
     }
+    if (_filename) {
+        std::cout << "File to R/W: " << _filename << std::endl;
+    }
     return 1;
+}
+size_t isexist(const char* fname) {
+    FILE* found;
+    //char16_t f[] = u"daff";
+
+    errno_t e = fopen_s(&found, fname, "rb");
+    if (e) return 0;
+    fseek(found, 0, SEEK_END);
+    auto x = ftell(found);
+    fclose(found);
+    return (size_t)x;
 }
 
 int main(int argc, char *argv[]) {
@@ -139,11 +174,55 @@ int main(int argc, char *argv[]) {
     UCHAR buff[1024 * 40] = { 0 };
     ULONG bsz = 1024;
     UINT16 Flash_Model, Jedec;
+    FILE *fop;
+    errno_t err;
+    size_t readed;
 
     if (argc > 1) {
         if (!parse_cmd(argc, argv)) {
             return 0;
         }
+    }
+    switch (_action)
+    {
+        size_t solo;
+    case 'v':
+        std::cout << "Verify (" << _filename << ")" << std::endl;
+        solo = isexist(_filename);
+        if (solo == 0) {
+            std::cout << _filename << " not found!*" << std::endl;
+            return 0;
+        }
+        else {
+            printf("file size is 0x%zX\r\n", solo);
+            // файл для сравнения предоставлен, считать его в буфер и заняться чипом
+            _cmpbuf = (uint8_t*)malloc(solo);
+            readed = solo;
+            readall(_filename, _cmpbuf, &readed);
+        }
+        err = fopen_s(&fop, _filename, "rb");
+        if (err) {
+            std::cout << _filename << " not found!" << std::endl;
+            return 0;
+        }
+        else {  // file is OK, read it and then close
+            fclose(fop);
+        }
+        break;
+    case 'r':
+        std::cout << "Reading to (" << _filename << ")" << std::endl;
+        err = fopen_s(&fop, _filename, "r+b");
+        if (err) {
+            std::cout << _filename << " not writable" << std::endl;
+            return 0;
+        }
+        else {  // file is OK, read it and then close
+            fclose(fop);
+        }
+        break;
+
+    default:
+        break;
     }
     HANDLE hh = CH347OpenDevice(0);
 
