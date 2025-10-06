@@ -16,6 +16,7 @@
 #include "spi_flash.h"
 
 extern uint16_t readall(const char* _filename, uint8_t* _cmpbuf, size_t* sz);
+int loader_init(ULONG id);
 
 namespace ra = std::ranges;
 //namespace vi = ra::views;
@@ -200,17 +201,39 @@ int main(int argc, char *argv[]) {
             readed = solo;
             readall(_filename, _cmpbuf, &readed);
         }
-        err = fopen_s(&fop, _filename, "rb");
-        if (err) {
-            std::cout << _filename << " not found!" << std::endl;
-            return 0;
+        if (loader_init(0)) {
+            std::cout << "Loader is OK, checking chip ID..." << std::endl;
         }
-        else {  // file is OK, read it and then close
-            fclose(fop);
+        else {
+            std::cout << "Loader not found, check CH347 board and cable! Is LED on?" << std::endl;
         }
         break;
     case 'r':
         std::cout << "Reading to (" << _filename << ")" << std::endl;
+        solo = isexist(_filename);
+        if (solo) {
+            if (!_always_yes) {
+                std::cout << _filename << " exists. It will be rewrited! [Y/n]" << std::endl;
+                // ask user for Y or N
+                int sym = getc(stdin);
+                sym = toupper(sym);
+                if (sym == 'Y') {
+                    std::cout << _filename << " will be rewrited!" << std::endl;
+                }
+                else {
+                    std::cout << _filename << " exists. Exiting..." << std::endl;
+                    return 0;
+                }
+            }
+        }
+        // open loader, check chip and read it
+        if (loader_init(0)) {
+            std::cout << "Loader is OK, checking chip ID..." << std::endl;
+        }
+        else {
+            std::cout << "Loader not found, check CH347 board and cable! Is LED on?" << std::endl;
+        }
+
         err = fopen_s(&fop, _filename, "r+b");
         if (err) {
             std::cout << _filename << " not writable" << std::endl;
@@ -226,7 +249,7 @@ int main(int argc, char *argv[]) {
     }
     HANDLE hh = CH347OpenDevice(0);
 
-    if (hh) {
+    if (hh != INVALID_HANDLE_VALUE) {
         CH347GetVersion(0, &drv, &dll, &bcd, &chip);
         if (!drv) {
             std::cout << "Loader not found, check board and cable! Is LED on?" << std::endl;
@@ -279,7 +302,7 @@ int main(int argc, char *argv[]) {
         CH347CloseDevice(0);
     }
     else {
-        std::cout << "Driver not found, please install CH347PAR!\r\n";
+        std::cout << "Loader not found! Please check CH347 board and cable!\r\n";
     }
     return 0;
 }
